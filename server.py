@@ -11,7 +11,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
-# Carrega variáveis de ambiente (.env)
+# Carrega variáveis de ambiente (.env) se existirem
 load_dotenv()
 
 # ==============================================================================
@@ -38,15 +38,21 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
 def get_db_connection():
+    """Retorna uma conexão com o PostgreSQL Neon ou None se a URL não estiver configurada."""
     url = os.getenv("DATABASE_URL")
     if not url:
-        raise ValueError("DATABASE_URL não encontrada no arquivo .env ou nas variáveis de ambiente.")
+        return None
     return psycopg2.connect(url, cursor_factory=RealDictCursor)
 
 def init_db():
-    """Cria a estrutura de tabelas no Neon e insere os dados iniciais de teste."""
+    """Cria a estrutura de tabelas no Neon e garante a presença dos dados de teste."""
+    conn = None
     try:
         conn = get_db_connection()
+        if not conn:
+            print("⚠️ DATABASE_URL não configurada. Pulei a inicialização do banco.")
+            return
+
         with conn.cursor() as cur:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -103,42 +109,49 @@ def init_db():
             """)
             conn.commit()
 
-            # Popula usuários e evento de demonstração caso o banco esteja vazio
-            cur.execute("SELECT COUNT(*) as count FROM users;")
-            if cur.fetchone()['count'] == 0:
-                admin_id = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
-                company_id = "b1eebc99-9c0b-4ef8-bb6d-6bb9bd380a22"
-                public_id = "c2eebc99-9c0b-4ef8-bb6d-6bb9bd380a33"
-                default_event_id = "e3a8910d-2b4a-4f51-b883-92f701b918a2"
+            # Garante que os 3 usuários de teste existam no banco
+            admin_id = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+            company_id = "b1eebc99-9c0b-4ef8-bb6d-6bb9bd380a22"
+            public_id = "c2eebc99-9c0b-4ef8-bb6d-6bb9bd380a33"
+            default_event_id = "e3a8910d-2b4a-4f51-b883-92f701b918a2"
 
-                pass_admin = hash_password("admin123")
-                pass_empresa = hash_password("empresa123")
-                pass_publico = hash_password("user123")
+            pass_admin = hash_password("admin123")
+            pass_empresa = hash_password("empresa123")
+            pass_publico = hash_password("user123")
 
-                cur.execute("""
-                    INSERT INTO users (id, name, email, pass_hash, role) VALUES
-                    (%s, 'Leonardo Medeiros', 'admin@alltickets.com', %s, 'ADMIN'),
-                    (%s, 'Mariana Produções', 'empresa@mariana.com', %s, 'EMPRESA'),
-                    (%s, 'Isadora Fernandes', 'isadora@email.com', %s, 'PUBLICO');
-                """, (admin_id, pass_admin, company_id, pass_empresa, public_id, pass_publico))
+            cur.execute("""
+                INSERT INTO users (id, name, email, pass_hash, role) VALUES
+                (%s, 'Leonardo Medeiros', 'admin@alltickets.com', %s, 'ADMIN'),
+                (%s, 'Mariana Produções', 'empresa@mariana.com', %s, 'EMPRESA'),
+                (%s, 'Isadora Fernandes', 'isadora@email.com', %s, 'PUBLICO')
+                ON CONFLICT (email) DO NOTHING;
+            """, (admin_id, pass_admin, company_id, pass_empresa, public_id, pass_publico))
 
-                cur.execute("""
-                    INSERT INTO events (id, company_id, company_name, title, category, price, stock, likes_count) VALUES
-                    (%s, %s, 'Mariana Produções', 'Maceió Summer Sounds 2026', 'Shows e Festivais', 100.00, 10, 18);
-                """, (default_event_id, company_id))
+            cur.execute("""
+                INSERT INTO events (id, company_id, company_name, title, category, price, stock, likes_count) VALUES
+                (%s, %s, 'Mariana Produções', 'Maceió Summer Sounds 2026', 'Shows e Festivais', 100.00, 10, 18)
+                ON CONFLICT (id) DO NOTHING;
+            """, (default_event_id, company_id))
 
-                cur.execute("""
-                    INSERT INTO company_requests (id, user_id, company_name, cnpj, email, description, status) VALUES
-                    ('REQ-101', %s, 'Isadora Eventos Culturais', '12.345.678/0001-90', 'isadora@email.com', 'Produção de Peças Teatrais e Festivais', 'PENDENTE');
-                """, (public_id,))
+            cur.execute("""
+                INSERT INTO company_requests (id, user_id, company_name, cnpj, email, description, status) VALUES
+                ('REQ-101', %s, 'Isadora Eventos Culturais', '12.345.678/0001-90', 'isadora@email.com', 'Produção de Peças Teatrais e Festivais', 'PENDENTE')
+                ON CONFLICT (id) DO NOTHING;
+            """, (public_id,))
 
-                conn.commit()
-        conn.close()
+            conn.commit()
+
     except Exception as e:
-        print(f"⚠️ Aviso ao inicializar o banco de dados Neon: {e}")
+        print(f"⚠️ Aviso na inicialização do Neon: {e}")
+    finally:
+        if conn:
+            conn.close()
 
-# Executa a criação automática de tabelas
-init_db()
+# Tenta inicializar as tabelas com proteção de exceção
+try:
+    init_db()
+except Exception as e:
+    print(f"Aviso de inicialização ignorado: {e}")
 
 # ==============================================================================
 # 2. FRONTEND HTML5 + JS ES6 (DESIGN DARK ESTON TEMPLATE INSPIRATION)
@@ -636,6 +649,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
     async function loadEvents() {
       const res = await fetch('/api/v1/events');
+      if (!res.ok) return;
       const events = await res.json();
       const grid = document.getElementById('eventsGrid');
 
@@ -697,6 +711,7 @@ HTML_PAGE = """<!DOCTYPE html>
       const res = await fetch('/api/v1/tickets', {
         headers: { 'Authorization': `Bearer ${sessionToken}` }
       });
+      if (!res.ok) return;
       const tickets = await res.json();
       const wallet = document.getElementById('userWallet');
 
@@ -926,11 +941,20 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html_content.encode('utf-8'))
 
+    def check_db_or_error(self):
+        conn = get_db_connection()
+        if not conn:
+            self.send_json({"error": "DATABASE_URL não encontrada no ambiente ou falha na conexão com o Neon."}, 500)
+            return None
+        return conn
+
     def get_auth_user(self):
         auth_header = self.headers.get('Authorization', '')
         if auth_header.startswith('Bearer '):
             token = auth_header.split(' ')[1]
             conn = get_db_connection()
+            if not conn:
+                return None
             try:
                 with conn.cursor() as cur:
                     cur.execute("""
@@ -939,8 +963,10 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
                         JOIN users u ON s.user_id = u.id
                         WHERE s.token = %s;
                     """, (token,))
-                    user = cur.fetchone()
-                    return user
+                    return cur.fetchone()
+            except Exception as e:
+                print(f"Erro em get_auth_user: {e}")
+                return None
             finally:
                 conn.close()
         return None
@@ -955,93 +981,76 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        user = self.get_auth_user()
 
         if path == "/" or path == "/index.html":
-            self.send_html(HTML_PAGE)
+            return self.send_html(HTML_PAGE)
 
-        elif path == "/api/v1/auth/me":
+        user = self.get_auth_user()
+
+        if path == "/api/v1/auth/me":
             if not user:
                 return self.send_json({"error": "Não autenticado."}, 401)
             return self.send_json(user)
 
-        elif path == "/api/v1/events":
-            conn = get_db_connection()
-            try:
+        conn = self.check_db_or_error()
+        if not conn:
+            return
+
+        try:
+            if path == "/api/v1/events":
                 with conn.cursor() as cur:
                     cur.execute("SELECT * FROM events ORDER BY created_at DESC;")
-                    events = cur.fetchall()
-                    self.send_json(events)
-            finally:
-                conn.close()
+                    self.send_json(cur.fetchall())
 
-        elif path == "/api/v1/tickets":
-            if not user:
-                return self.send_json({"error": "Não autenticado."}, 401)
-            conn = get_db_connection()
-            try:
+            elif path == "/api/v1/tickets":
+                if not user:
+                    return self.send_json({"error": "Não autenticado."}, 401)
                 with conn.cursor() as cur:
                     if user['role'] == UserRole.ADMIN:
                         cur.execute("SELECT * FROM tickets ORDER BY created_at DESC;")
                     else:
                         cur.execute("SELECT * FROM tickets WHERE user_id = %s ORDER BY created_at DESC;", (user['id'],))
-                    tickets = cur.fetchall()
-                    self.send_json(tickets)
-            finally:
-                conn.close()
+                    self.send_json(cur.fetchall())
 
-        elif path == "/api/v1/company-requests/my-status":
-            if not user:
-                return self.send_json({"error": "Não autenticado."}, 401)
-            conn = get_db_connection()
-            try:
+            elif path == "/api/v1/company-requests/my-status":
+                if not user:
+                    return self.send_json({"error": "Não autenticado."}, 401)
                 with conn.cursor() as cur:
                     cur.execute("SELECT * FROM company_requests WHERE user_id = %s ORDER BY created_at DESC LIMIT 1;", (user['id'],))
                     req = cur.fetchone()
                     if req:
                         return self.send_json({"status": req["status"], "request": req})
                     return self.send_json({"status": "NONE"})
-            finally:
-                conn.close()
 
-        elif path == "/api/v1/company-requests":
-            if not user or user["role"] != UserRole.ADMIN:
-                return self.send_json({"error": "Acesso negado. Requer perfil ADMIN."}, 403)
-            conn = get_db_connection()
-            try:
+            elif path == "/api/v1/company-requests":
+                if not user or user["role"] != UserRole.ADMIN:
+                    return self.send_json({"error": "Acesso negado. Requer perfil ADMIN."}, 403)
                 with conn.cursor() as cur:
                     cur.execute("SELECT * FROM company_requests ORDER BY created_at DESC;")
-                    reqs = cur.fetchall()
-                    self.send_json(reqs)
-            finally:
-                conn.close()
+                    self.send_json(cur.fetchall())
 
-        elif path == "/api/v1/admin/stats":
-            if not user or user["role"] != UserRole.ADMIN:
-                return self.send_json({"error": "Acesso negado. Requer perfil ADMIN."}, 403)
-            conn = get_db_connection()
-            try:
+            elif path == "/api/v1/admin/stats":
+                if not user or user["role"] != UserRole.ADMIN:
+                    return self.send_json({"error": "Acesso negado. Requer perfil ADMIN."}, 403)
                 with conn.cursor() as cur:
                     cur.execute("SELECT COALESCE(SUM(total_amount), 0) as total_volume, COALESCE(SUM(platform_share_20), 0) as platform_share FROM financial_transactions;")
                     row = cur.fetchone()
                     self.send_json({"total_volume": row["total_volume"], "platform_share": row["platform_share"]})
-            finally:
-                conn.close()
 
-        elif path == "/api/v1/admin/users":
-            if not user or user["role"] != UserRole.ADMIN:
-                return self.send_json({"error": "Acesso negado. Requer perfil ADMIN."}, 403)
-            conn = get_db_connection()
-            try:
+            elif path == "/api/v1/admin/users":
+                if not user or user["role"] != UserRole.ADMIN:
+                    return self.send_json({"error": "Acesso negado. Requer perfil ADMIN."}, 403)
                 with conn.cursor() as cur:
                     cur.execute("SELECT id, name, email, role FROM users ORDER BY name ASC;")
-                    users = cur.fetchall()
-                    self.send_json(users)
-            finally:
-                conn.close()
+                    self.send_json(cur.fetchall())
 
-        else:
-            self.send_json({"error": "Rota não encontrada"}, 404)
+            else:
+                self.send_json({"error": "Rota não encontrada"}, 404)
+
+        except Exception as e:
+            self.send_json({"error": f"Erro interno no servidor: {str(e)}"}, 500)
+        finally:
+            conn.close()
 
     def do_POST(self):
         parsed = urlparse(self.path)
@@ -1051,17 +1060,19 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
         data = json.loads(body.decode('utf-8')) if body else {}
 
         user = self.get_auth_user()
+        conn = self.check_db_or_error()
+        if not conn:
+            return
 
-        if path == "/api/v1/auth/register":
-            name = data.get("name", "").strip()
-            email = data.get("email", "").strip().lower()
-            password = data.get("password", "").strip()
+        try:
+            if path == "/api/v1/auth/register":
+                name = data.get("name", "").strip()
+                email = data.get("email", "").strip().lower()
+                password = data.get("password", "").strip()
 
-            if not name or not email or not password:
-                return self.send_json({"error": "Todos os campos são obrigatórios."}, 400)
+                if not name or not email or not password:
+                    return self.send_json({"error": "Todos os campos são obrigatórios."}, 400)
 
-            conn = get_db_connection()
-            try:
                 with conn.cursor() as cur:
                     cur.execute("SELECT id FROM users WHERE LOWER(email) = %s;", (email,))
                     if cur.fetchone():
@@ -1081,16 +1092,12 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
                     conn.commit()
 
                     return self.send_json({"token": token, "user": new_user}, 201)
-            finally:
-                conn.close()
 
-        elif path == "/api/v1/auth/login":
-            email = data.get("email", "").strip().lower()
-            pass_raw = data.get("password", "").strip()
-            pass_hash = hash_password(pass_raw)
+            elif path == "/api/v1/auth/login":
+                email = data.get("email", "").strip().lower()
+                pass_raw = data.get("password", "").strip()
+                pass_hash = hash_password(pass_raw)
 
-            conn = get_db_connection()
-            try:
                 with conn.cursor() as cur:
                     cur.execute("""
                         SELECT id, name, email, role
@@ -1107,21 +1114,17 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
                     conn.commit()
 
                     return self.send_json({"token": token, "user": found})
-            finally:
-                conn.close()
 
-        elif path == "/api/v1/events":
-            if not user or user["role"] not in [UserRole.EMPRESA, UserRole.ADMIN]:
-                return self.send_json({"error": "Usuário não possui permissão de EMPRESA para criar eventos."}, 403)
+            elif path == "/api/v1/events":
+                if not user or user["role"] not in [UserRole.EMPRESA, UserRole.ADMIN]:
+                    return self.send_json({"error": "Usuário não possui permissão de EMPRESA para criar eventos."}, 403)
 
-            price = data.get("price")
-            stock = data.get("stock")
-            if price is None or stock is None or float(price) < 0 or int(stock) < 0:
-                return self.send_json({"error": "Dados inválidos ou preço/estoque negativos."}, 422)
+                price = data.get("price")
+                stock = data.get("stock")
+                if price is None or stock is None or float(price) < 0 or int(stock) < 0:
+                    return self.send_json({"error": "Dados inválidos ou preço/estoque negativos."}, 422)
 
-            new_id = str(uuid.uuid4())
-            conn = get_db_connection()
-            try:
+                new_id = str(uuid.uuid4())
                 with conn.cursor() as cur:
                     cur.execute("""
                         INSERT INTO events (id, company_id, company_name, title, category, price, stock, likes_count)
@@ -1136,16 +1139,12 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
                     new_event = cur.fetchone()
                     conn.commit()
                     return self.send_json(new_event, 201)
-            finally:
-                conn.close()
 
-        elif path.startswith("/api/v1/events/") and path.endswith("/purchase"):
-            if not user:
-                return self.send_json({"error": "Você precisa estar logado para comprar ingressos."}, 401)
+            elif path.startswith("/api/v1/events/") and path.endswith("/purchase"):
+                if not user:
+                    return self.send_json({"error": "Você precisa estar logado para comprar ingressos."}, 401)
 
-            event_id = path.split("/")[4]
-            conn = get_db_connection()
-            try:
+                event_id = path.split("/")[4]
                 with conn.cursor() as cur:
                     cur.execute("SELECT * FROM events WHERE id = %s FOR UPDATE;", (event_id,))
                     event = cur.fetchone()
@@ -1156,10 +1155,8 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
                     if event["stock"] <= 0:
                         return self.send_json({"error": "Ingressos esgotados para este evento"}, 400)
 
-                    # Decrementa o estoque
                     cur.execute("UPDATE events SET stock = stock - 1 WHERE id = %s;", (event_id,))
 
-                    # Gera o Ingresso com Hash Criptográfico
                     ticket_id = str(uuid.uuid4())
                     raw_seed = f"{ticket_id}-{user['id']}-{event_id}-{datetime.now(timezone.utc).timestamp()}"
                     qr_hash = f"QR-{hashlib.sha256(raw_seed.encode()).hexdigest()[:10].upper()}"
@@ -1171,7 +1168,6 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
                     """, (ticket_id, user["id"], event_id, event["title"], qr_hash))
                     ticket = cur.fetchone()
 
-                    # Transação Financeira (Split 80/20)
                     total = float(event["price"])
                     company_share = round(total * 0.80, 2)
                     platform_share = round(total * 0.20, 2)
@@ -1192,13 +1188,9 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
                             "platform_share_20": platform_share
                         }
                     }, 201)
-            finally:
-                conn.close()
 
-        elif path == "/api/v1/tickets/validate":
-            qr_hash = data.get("qr_hash", "").strip()
-            conn = get_db_connection()
-            try:
+            elif path == "/api/v1/tickets/validate":
+                qr_hash = data.get("qr_hash", "").strip()
                 with conn.cursor() as cur:
                     cur.execute("SELECT * FROM tickets WHERE qr_hash = %s;", (qr_hash,))
                     ticket = cur.fetchone()
@@ -1219,15 +1211,11 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
                         "event_title": ticket["event_title"],
                         "validated_at": validated_at.isoformat()
                     }, 200)
-            finally:
-                conn.close()
 
-        elif path == "/api/v1/company-requests":
-            if not user:
-                return self.send_json({"error": "Você precisa estar autenticado."}, 401)
+            elif path == "/api/v1/company-requests":
+                if not user:
+                    return self.send_json({"error": "Você precisa estar autenticado."}, 401)
 
-            conn = get_db_connection()
-            try:
                 with conn.cursor() as cur:
                     cur.execute("SELECT id FROM company_requests WHERE user_id = %s AND status = 'PENDENTE';", (user["id"],))
                     if cur.fetchone():
@@ -1251,11 +1239,14 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
                     req = cur.fetchone()
                     conn.commit()
                     return self.send_json(req, 201)
-            finally:
-                conn.close()
 
-        else:
-            self.send_json({"error": "Rota não encontrada"}, 404)
+            else:
+                self.send_json({"error": "Rota não encontrada"}, 404)
+
+        except Exception as e:
+            self.send_json({"error": f"Erro interno no servidor: {str(e)}"}, 500)
+        finally:
+            conn.close()
 
     def do_PATCH(self):
         parsed = urlparse(self.path)
@@ -1265,14 +1256,16 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
         data = json.loads(body.decode('utf-8')) if body else {}
 
         user = self.get_auth_user()
+        conn = self.check_db_or_error()
+        if not conn:
+            return
 
-        if path.startswith("/api/v1/company-requests/"):
-            if not user or user["role"] != UserRole.ADMIN:
-                return self.send_json({"error": "Acesso negado. Requer perfil ADMIN."}, 403)
+        try:
+            if path.startswith("/api/v1/company-requests/"):
+                if not user or user["role"] != UserRole.ADMIN:
+                    return self.send_json({"error": "Acesso negado. Requer perfil ADMIN."}, 403)
 
-            req_id = path.split("/")[4]
-            conn = get_db_connection()
-            try:
+                req_id = path.split("/")[4]
                 with conn.cursor() as cur:
                     cur.execute("SELECT * FROM company_requests WHERE id = %s;", (req_id,))
                     req = cur.fetchone()
@@ -1288,16 +1281,12 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
 
                     conn.commit()
                     return self.send_json({"message": f"Solicitação {status} com sucesso!", "request": updated_req}, 200)
-            finally:
-                conn.close()
 
-        elif path.startswith("/api/v1/admin/users/") and path.endswith("/role"):
-            if not user or user["role"] != UserRole.ADMIN:
-                return self.send_json({"error": "Acesso negado. Requer perfil ADMIN."}, 403)
+            elif path.startswith("/api/v1/admin/users/") and path.endswith("/role"):
+                if not user or user["role"] != UserRole.ADMIN:
+                    return self.send_json({"error": "Acesso negado. Requer perfil ADMIN."}, 403)
 
-            target_user_id = path.split("/")[5]
-            conn = get_db_connection()
-            try:
+                target_user_id = path.split("/")[5]
                 with conn.cursor() as cur:
                     cur.execute("SELECT * FROM users WHERE id = %s;", (target_user_id,))
                     target_user = cur.fetchone()
@@ -1312,10 +1301,13 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
                         return self.send_json(updated_user, 200)
                     else:
                         return self.send_json({"error": "Papel inválido"}, 400)
-            finally:
-                conn.close()
 
-# Exporta o handler para a execução serverless da Vercel
+        except Exception as e:
+            self.send_json({"error": f"Erro interno no servidor: {str(e)}"}, 500)
+        finally:
+            conn.close()
+
+# Exporta o handler global para a execução serverless da Vercel
 handler = AllTicketsRequestHandler
 
 # ==============================================================================
