@@ -926,6 +926,15 @@ HTML_PAGE = """<!DOCTYPE html>
 # A classe precisa se chamar exatamente 'handler' para que a Vercel a reconheça
 class handler(http.server.BaseHTTPRequestHandler):
 
+    def get_clean_path(self):
+      parsed = urlparse(self.path)
+      path = parsed.path
+      if path.startswith("/server.py"):
+          path = path[10:]
+      if not path:
+          path = "/"
+      return path
+
     def send_json(self, data, status=200):
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
@@ -980,11 +989,10 @@ class handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
+        path = self.get_clean_path()
 
         if path == "/" or path == "/index.html":
-            return self.send_html(HTML_PAGE)
+          return self.send_html(HTML_PAGE)
 
         user = self.get_auth_user()
 
@@ -1054,8 +1062,7 @@ class handler(http.server.BaseHTTPRequestHandler):
             conn.close()
 
     def do_POST(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
+        path = self.get_clean_path()
         length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(length) if length > 0 else b'{}'
         data = json.loads(body.decode('utf-8')) if body else {}
@@ -1250,8 +1257,7 @@ class handler(http.server.BaseHTTPRequestHandler):
             conn.close()
 
     def do_PATCH(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
+        path = self.get_clean_path()
         length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(length) if length > 0 else b'{}'
         data = json.loads(body.decode('utf-8')) if body else {}
