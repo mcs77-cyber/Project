@@ -1,0 +1,5 @@
+É preciso instalar o flask
+pip install flask
+
+Para executar o servidor
+python server.py
