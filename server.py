@@ -927,12 +927,16 @@ HTML_PAGE = """<!DOCTYPE html>
 class handler(http.server.BaseHTTPRequestHandler):
 
     def get_clean_path(self):
-      parsed = urlparse(self.path)
+      raw_path = self.headers.get('x-forwarded-uri') or self.headers.get('x-matched-path') or self.path
+      parsed = urlparse(raw_path)
       path = parsed.path
+
       if path.startswith("/server.py"):
           path = path[10:]
+
       if not path:
           path = "/"
+
       return path
 
     def send_json(self, data, status=200):
