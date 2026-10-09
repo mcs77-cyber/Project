@@ -4,7 +4,7 @@ import uuid
 import hashlib
 from datetime import datetime, timezone
 from decimal import Decimal
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 import http.server
 import socketserver
 import psycopg2
@@ -923,21 +923,27 @@ HTML_PAGE = """<!DOCTYPE html>
 # 3. HANDLER HTTP E TRATAMENTO DAS ROTAS REST COM NEON (POSTGRESQL)
 # ==============================================================================
 
-# A classe precisa se chamar exatamente 'handler' para que a Vercel a reconheça
 class handler(http.server.BaseHTTPRequestHandler):
 
     def get_clean_path(self):
-      raw_path = self.headers.get('x-forwarded-uri') or self.headers.get('x-matched-path') or self.path
-      parsed = urlparse(raw_path)
-      path = parsed.path
+        parsed = urlparse(self.path)
+        query_params = parse_qs(parsed.query)
+        
+        # Extrai a rota real repassada pelo vercel.json via ?path=/...
+        if 'path' in query_params and query_params['path']:
+            path = query_params['path'][0]
+        else:
+            path = parsed.path
+            if path.startswith("/server.py"):
+                path = path[10:]
 
-      if path.startswith("/server.py"):
-          path = path[10:]
+        if path.startswith("//"):
+            path = path[1:]
 
-      if not path:
-          path = "/"
+        if not path or path == "":
+            path = "/"
 
-      return path
+        return path
 
     def send_json(self, data, status=200):
         self.send_response(status)
@@ -996,7 +1002,7 @@ class handler(http.server.BaseHTTPRequestHandler):
         path = self.get_clean_path()
 
         if path == "/" or path == "/index.html":
-          return self.send_html(HTML_PAGE)
+            return self.send_html(HTML_PAGE)
 
         user = self.get_auth_user()
 
