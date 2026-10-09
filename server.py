@@ -147,7 +147,7 @@ def init_db():
         if conn:
             conn.close()
 
-# Tenta inicializar as tabelas com proteção de exceção
+# Tenta inicializar as tabelas
 try:
     init_db()
 except Exception as e:
@@ -923,7 +923,8 @@ HTML_PAGE = """<!DOCTYPE html>
 # 3. HANDLER HTTP E TRATAMENTO DAS ROTAS REST COM NEON (POSTGRESQL)
 # ==============================================================================
 
-class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
+# A classe precisa se chamar exatamente 'handler' para que a Vercel a reconheça
+class handler(http.server.BaseHTTPRequestHandler):
 
     def send_json(self, data, status=200):
         self.send_response(status)
@@ -1307,16 +1308,13 @@ class AllTicketsRequestHandler(http.server.BaseHTTPRequestHandler):
         finally:
             conn.close()
 
-# Exporta o handler global para a execução serverless da Vercel
-handler = AllTicketsRequestHandler
-
 # ==============================================================================
 # 4. INICIALIZAÇÃO LOCAL (PORTA 8000)
 # ==============================================================================
 
 if __name__ == "__main__":
     PORT = 8000
-    with socketserver.TCPServer(("", PORT), AllTicketsRequestHandler) as httpd:
+    with socketserver.TCPServer(("", PORT), handler) as httpd:
         print(f"🚀 Servidor All Tickets rodando em http://localhost:{PORT}")
         print("💡 Conectado ao Neon PostgreSQL! Teste o fluxo no navegador.")
         try:
